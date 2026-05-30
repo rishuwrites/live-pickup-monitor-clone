@@ -1,27 +1,84 @@
 /**
- * Lenskart Live Pickup Monitor — script.js
+ * Lenskart Live Pickup Monitor (Clone) — script.js
  *
- * Loads pickup schedule from data/pickups.json,
- * then updates the dashboard every second.
+ * Schedule logic:  reads data/pickups.json  (same as original)
+ * Counts layer:    reads snapshot from Google Sheets public GET endpoint
+ *                  — pushed by the NEXS bookmarklet running on your device
  *
- * Key functions:
- *   toMin(timeStr)         — converts "hh:mm AM/PM" → minutes since midnight
- *   normalizeFuture(s,now) — shifts a past start-time forward by 1440 min
- *                            so upcoming sorting wraps correctly past midnight
- *   buildSlotMap(arr)      — groups pickups that share the same window
- *   update()               — main render loop, called every 1 s
+ * Special rule:
+ *   DELHIVERY displayed count = raw DELHIVERY count − DELHIVERYPDS count
+ *   (DELHIVERYPDS manifests appear inside DELHIVERY's API response)
  */
 
-// ─── State ───────────────────────────────────────────────────────────────────
-let pickupData = [];   // filled after JSON fetch
-let lastRunKey = "";   // detects changes in active pickups (for flash/shake)
-
-// ─── Time helpers ─────────────────────────────────────────────────────────────
+// ─── Config ───────────────────────────────────────────────────────────────────
 
 /**
- * Convert a 12-hour time string ("02:30 AM" / "12:00 AM") to minutes since
- * midnight.  12:xx AM → 0..59,  12:xx PM → 720..779.
+ * Your Google Apps Script Web App URL (deployed as "Anyone" readable).
+ * GET request returns JSON:
+ * {
+ *   "timestamp": "30-05-2026 11:32:00 IST",
+ *   "BLUEDART": 12,
+ *   "DELHIVERY": 8,
+ *   "DELHIVERYPDS": 3,
+ *   ...
+ * }
  */
+const SHEET_GET_URL = "https://script.google.com/macros/s/AKfycbwln1BPMydiXTHNTN90uvYTMQ-6vKIrEf6yR3-hZDksjofIzypCJQs73HziHhyx2UAX/exec";
+
+// How often to re-fetch counts from sheet (ms). 60s is fine.
+const COUNTS_REFRESH_MS = 60_000;
+
+// ─── State ────────────────────────────────────────────────────────────────────
+let pickupData  = [];   // filled after pickups.json fetch
+let counts      = {};   // { BLUEDART: 12, DELHIVERY: 5, ... } — from sheet
+let lastUpdated = null; // IST timestamp string from sheet
+let lastRunKey  = "";   // change-detection for flash/shake
+
+// ─── Courier key extractor ────────────────────────────────────────────────────
+/**
+ * "BLUEDART RD 1&2"   → "BLUEDART"
+ * "PURPLEDRONE RD 2"  → "PURPLEDRONE"
+ * "BusybeesSDD RD 1"  → "BusybeesSDD"
+ * "shreerajxpress RD 1" → "shreerajxpress"
+ */
+function courierKey(name) {
+  // Split on " RD " (case-insensitive) and take the first part
+  return name.split(/ RD /i)[0].trim();
+}
+
+/**
+ * Returns the count to display for a courier.
+ * DELHIVERY special rule: subtract DELHIVERYPDS.
+ * Returns null if no snapshot has been pushed yet.
+ */
+function getCount(name) {
+  if (Object.keys(counts).length === 0) return null; // no data yet
+
+  const key = courierKey(name);
+  const raw = counts[key] ?? 0;
+
+  if (key === "DELHIVERY") {
+    const pds = counts["DELHIVERYPDS"] ?? 0;
+    return Math.max(0, raw - pds);
+  }
+  return raw;
+}
+
+// ─── Count badge HTML ─────────────────────────────────────────────────────────
+function countBadge(name) {
+  const c = getCount(name);
+
+  if (c === null) {
+    // No snapshot pushed yet
+    return `<span class="count-badge count-unknown">⏳ —</span>`;
+  }
+  if (c === 0) {
+    return `<span class="count-badge count-zero">✅ 0</span>`;
+  }
+  return `<span class="count-badge count-live">📦 ${c}</span>`;
+}
+
+// ─── Time helpers ─────────────────────────────────────────────────────────────
 function toMin(t) {
   const [tm, ap] = t.split(" ");
   let [h, m]     = tm.split(":").map(Number);
@@ -30,36 +87,38 @@ function toMin(t) {
   return h * 60 + m;
 }
 
-/**
- * If a slot's start has already passed today, wrap it to "tomorrow" by adding
- * 1440 minutes.  This keeps the upcoming list sorted correctly when current
- * time is near midnight.
- */
 function normalizeFuture(startMin, nowMin) {
   return startMin <= nowMin ? startMin + 1440 : startMin;
 }
 
-// ─── Slot grouping ────────────────────────────────────────────────────────────
-
+// ─── Slot grouping ─────────────────────────────────────────────────────────────
 /**
- * Given an array of pickup objects that are NOT currently running,
- * groups them by their "start|end" key and returns a sorted array of slots.
- * Each slot: { start, end, names: [...], sortStart }
+ * Groups pickups by time window.
+ * Each slot: { start, end, pickups: [{name, ...}], sortStart }
  */
 function buildSlotMap(futureArr) {
   const map = {};
   futureArr.forEach(p => {
     const key = `${p.start}|${p.end}`;
     if (!map[key]) {
-      map[key] = { start: p.start, end: p.end, names: [], sortStart: p.sortStart };
+      map[key] = { start: p.start, end: p.end, pickups: [], sortStart: p.sortStart };
     }
-    map[key].names.push(p.name);
+    map[key].pickups.push(p);
   });
   return Object.values(map).sort((a, b) => a.sortStart - b.sortStart);
 }
 
-// ─── DOM helpers ──────────────────────────────────────────────────────────────
+// ─── Render a slot's courier list with count badges ───────────────────────────
+function renderCourierLines(pickups) {
+  return pickups.map(p => `
+    <div class="courier-line">
+      <span class="courier-name">${p.name}</span>
+      ${countBadge(p.name)}
+    </div>
+  `).join("");
+}
 
+// ─── DOM helpers ──────────────────────────────────────────────────────────────
 function $(id) { return document.getElementById(id); }
 
 function flashShake(el) {
@@ -67,41 +126,77 @@ function flashShake(el) {
   setTimeout(() => el.classList.remove("flash", "shake"), 600);
 }
 
-// ─── Main update loop ─────────────────────────────────────────────────────────
+// ─── IST time ─────────────────────────────────────────────────────────────────
+function getISTTime() {
+  const now = new Date();
+  return new Date(now.toLocaleString("en-US", { timeZone: "Asia/Kolkata" }));
+}
 
+function formatClockWithDeciseconds(istTime) {
+  const base = new Intl.DateTimeFormat("en-IN", {
+    weekday: "long", day: "numeric", month: "numeric", year: "numeric",
+    hour: "numeric", minute: "2-digit", second: "2-digit", hour12: true,
+  }).format(istTime);
+  const ds = Math.floor(istTime.getMilliseconds() / 100);
+  return `${base}.${ds}`;
+}
+
+// ─── Last updated indicator ───────────────────────────────────────────────────
+function renderLastUpdated() {
+  const el = $("lastUpdated");
+  if (!el) return;
+  if (!lastUpdated) {
+    el.textContent = "⏳ Counts: waiting for first push...";
+    el.className = "last-updated stale";
+  } else {
+    el.textContent = `📊 Counts last pushed: ${lastUpdated}`;
+    el.className = "last-updated fresh";
+  }
+}
+
+// ─── Fetch counts from Google Sheet ──────────────────────────────────────────
+async function fetchCounts() {
+  if (!SHEET_GET_URL || SHEET_GET_URL.includes("YOUR_GOOGLE")) return;
+  try {
+    const res  = await fetch(SHEET_GET_URL + "?t=" + Date.now()); // bust cache
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    const data = await res.json();
+
+    // Pull out the timestamp, rest are counts
+    lastUpdated = data.timestamp || null;
+    const newCounts = {};
+    Object.entries(data).forEach(([k, v]) => {
+      if (k === "timestamp") return;
+      if (typeof v === "number") newCounts[k] = v;
+    });
+    counts = newCounts;
+    renderLastUpdated();
+  } catch (err) {
+    console.warn("Could not fetch counts from sheet:", err.message);
+  }
+}
+
+// ─── Main update loop (100ms) ─────────────────────────────────────────────────
 function update() {
-  const now    = new Date();
-  const curMin = now.getHours() * 60 + now.getMinutes();
-  const nowSec = now.getHours() * 3600 + now.getMinutes() * 60 + now.getSeconds();
+  const istNow = getISTTime();
+  const curMin = istNow.getHours() * 60 + istNow.getMinutes();
+  const nowSec = istNow.getHours() * 3600 + istNow.getMinutes() * 60 + istNow.getSeconds();
 
-  // ── Clock ────────────────────────────────────────────────────────────────
-  $("clock").innerText = now.toLocaleString("en-IN", {
-    weekday: "long",
-    day:     "numeric",
-    month:   "numeric",
-    year:    "numeric",
-    hour:    "numeric",
-    minute:  "2-digit",
-    second:  "2-digit",
-    hour12:  true,
-  });
+  // Clock
+  $("clock").innerText = formatClockWithDeciseconds(istNow);
 
-  // ── Classify pickups ──────────────────────────────────────────────────────
+  // Classify pickups
   const running = [];
   const future  = [];
 
   pickupData.forEach(p => {
     let s = toMin(p.start);
     let e = toMin(p.end);
-
-    // Handle windows that cross midnight (e.g. 11:30 PM → 12:00 AM)
     if (e <= s) e += 1440;
 
-    // Also handle the case where current time is in the "next day" portion
-    // of a midnight-crossing window (curMin < s but window wraps).
     const inWindow =
       (curMin >= s && curMin < e) ||
-      (e > 1440 && curMin < e - 1440); // early-morning side of a midnight wrap
+      (e > 1440 && curMin < e - 1440);
 
     if (inWindow) {
       running.push({ ...p, startMin: s, endMin: e });
@@ -122,7 +217,7 @@ function update() {
     const total  = (first.endMin - first.startMin) * 60;
     const pct    = Math.min(100, Math.max(0, ((total - remain) / total) * 100));
 
-    const names = running.map(x => x.name).join(", ");
+    const names = running.map(x => x.name).join(",");
     if (names !== lastRunKey) {
       flashShake(runRow);
       lastRunKey = names;
@@ -134,7 +229,9 @@ function update() {
         <span class="time-badge">${first.start} – ${first.end}</span>
         <span class="countdown-badge">⏱ ${Math.floor(remain / 60)}m ${remain % 60}s left</span>
       </div>
-      ${names}
+      <div class="courier-list running-couriers">
+        ${renderCourierLines(running)}
+      </div>
       <div class="progress"><div class="bar" style="width:${pct.toFixed(1)}%"></div></div>
     `;
   } else {
@@ -147,30 +244,41 @@ function update() {
 
   ["next1", "next2", "next3"].forEach((id, i) => {
     const slot = slots[i];
-    $(id).innerHTML = slot
-      ? `⏳ <span class="time-badge">${slot.start} – ${slot.end}</span><br>${slot.names.join(", ")}`
-      : "—";
+    if (!slot) {
+      $(id).innerHTML = "—";
+      return;
+    }
+    $(id).innerHTML = `
+      <div class="time-row">
+        <span>⏳</span>
+        <span class="time-badge">${slot.start} – ${slot.end}</span>
+      </div>
+      <div class="courier-list">
+        ${renderCourierLines(slot.pickups)}
+      </div>
+    `;
   });
 }
 
 // ─── Bootstrap ────────────────────────────────────────────────────────────────
-
-/**
- * Fetch pickup data from JSON, then start the 1-second update loop.
- * Falls back gracefully if the fetch fails (e.g. running from file://).
- */
 async function init() {
+  // Load schedule
   try {
     const res  = await fetch("data/pickups.json");
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     pickupData = await res.json();
   } catch (err) {
-    console.warn("Could not load data/pickups.json — using empty schedule.", err);
+    console.warn("Could not load data/pickups.json:", err);
     pickupData = [];
   }
 
+  // Load counts immediately, then on interval
+  await fetchCounts();
+  setInterval(fetchCounts, COUNTS_REFRESH_MS);
+
+  // Start render loop
   update();
-  setInterval(update, 1000);
+  setInterval(update, 100);
 }
 
 document.addEventListener("DOMContentLoaded", init);
