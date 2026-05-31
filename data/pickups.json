@@ -29,7 +29,7 @@
   {"name": "DELHIVERY RD 2",       "start": "08:30 PM", "end": "09:00 PM"},
   {"name": "BLUEDART RD 7",        "start": "09:00 PM", "end": "09:30 PM"},
   {"name": "DTDCVB2B RD 2",        "start": "09:00 PM", "end": "09:30 PM"},
-  {"name": "Velocity RD 4",        "start": "09:30 PM", "end": "10:00 PM"},
+  {"name": "Velocity RD 4",        "start": "09:00 PM", "end": "09:30 PM"},
   {"name": "PURPLEDRONE RD 7",     "start": "09:30 PM", "end": "10:00 PM"},
   {"name": "SHADOWFAX RD 1",       "start": "10:15 PM", "end": "10:30 PM"},
   {"name": "shreerajxpress RD 2",  "start": "10:30 PM", "end": "11:00 PM"},
