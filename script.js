@@ -203,6 +203,7 @@ function update() {
   const thirdRow = $("thirdRow");
 
   if (running.length) {
+    $("runningRow").style.display = ""; 
     thirdRow.style.display = "none";
 
     const first  = running[0];
@@ -229,7 +230,8 @@ function update() {
     `;
   } else {
     thirdRow.style.display = "grid";
-    $("current").innerText = "☕ No Active Pickups";
+   $("runningRow").style.display = "none";
+
   }
 
   // ── Upcoming slots ────────────────────────────────────────────────────────
