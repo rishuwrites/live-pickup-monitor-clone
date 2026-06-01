@@ -212,7 +212,7 @@ body {
   align-items: center;
   padding: 8px 18px;
   border-radius: 10px;
-  font-size: 1.7rem;
+  font-size: 2.8rem;
   font-weight: 900;
   white-space: nowrap;
   flex-shrink: 0;
@@ -221,8 +221,8 @@ body {
 /* Has packages — orange/red alert */
 .count-live {
   background: linear-gradient(135deg, #fff3e0, #ffe0b2);
-  color: #e65100;
-  border: 2px solid #ffb74d;
+  color: #000000;
+  border: 3px solid #ff4d4d;
   box-shadow: 0 3px 10px rgba(230,81,0,0.2);
 }
 
