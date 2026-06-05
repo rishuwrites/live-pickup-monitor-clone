@@ -23,7 +23,7 @@
   {"name": "shreerajxpress RD 1",  "start": "07:00 PM", "end": "07:30 PM"},
   {"name": "DELHIVERYPDS RD 1",    "start": "07:00 PM", "end": "07:30 PM"},
   {"name": "BUSYBEESPPD RD 1",     "start": "07:00 PM", "end": "07:30 PM"},
-  {"name": "XPRESSBEES RD 3",      "start": "07:30 PM", "end": "08:00 PM"},
+  {"name": "XPRESSBEES RD 3",      "start": "07:00 PM", "end": "07:30 PM"},
   {"name": "GPSUPPLY RD 1",        "start": "08:00 PM", "end": "08:30 PM"},
   {"name": "DELCARTB2B RD 3",      "start": "08:30 PM", "end": "09:00 PM"},
   {"name": "DELHIVERY RD 2",       "start": "08:30 PM", "end": "09:00 PM"},
