@@ -23,7 +23,7 @@
  *   ...
  * }
  */
-const SHEET_GET_URL = "https://script.google.com/macros/s/AKfycbwDjSwykFzMWHerWI0SA_ROS0uKYSpE09eWY5NaLzUlqG39O2h3W3bfzAWsy7-SYVVW/exec";
+const SHEET_GET_URL = "https://script.google.com/macros/s/AKfycby2xeJeM81Pk5lky5tscZnXgj0KuP6iN9H6Q7TbZtMXMsJWWFi0k9DPlhF03x2S_T78/exec";
 
 // How often to re-fetch counts from sheet (ms). 60s is fine.
 const COUNTS_REFRESH_MS = 15_000;
